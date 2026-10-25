@@ -1,0 +1,233 @@
+from pathlib import Path
+import random
+import shutil
+import xml.etree.ElementTree as ET
+
+# --------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------
+
+# CHANGE THIS to your actual dataset path.
+SOURCE_DIR = Path(
+    r"D:\github raw data\streetgaurd_datasets\annotated-images"
+)
+
+OUTPUT_DIR = Path("data/potholes")
+
+TRAIN_RATIO = 0.70
+VAL_RATIO = 0.15
+TEST_RATIO = 0.15
+
+RANDOM_SEED = 42
+
+CLASS_NAMES = ["pothole"]
+
+
+# --------------------------------------------------
+# XML PARSING
+# --------------------------------------------------
+
+def parse_annotation(xml_path, image_path):
+    """Read Pascal VOC XML and return YOLO-format labels."""
+
+    try:
+        root = ET.parse(xml_path).getroot()
+
+        size = root.find("size")
+
+        if size is None:
+            raise ValueError("Missing image size information")
+
+        width = int(size.findtext("width", "0"))
+        height = int(size.findtext("height", "0"))
+
+        if width <= 0 or height <= 0:
+            raise ValueError("Invalid image dimensions")
+
+        xml_filename = root.findtext("filename")
+
+        if xml_filename and xml_filename != image_path.name:
+            raise ValueError(
+                f"XML filename mismatch: {xml_filename}"
+            )
+
+        labels = []
+
+        for obj in root.findall("object"):
+            class_name = obj.findtext("name", "").strip().lower()
+
+            if class_name not in CLASS_NAMES:
+                print(
+                    f"Skipping unknown class '{class_name}' "
+                    f"in {xml_path.name}"
+                )
+                continue
+
+            box = obj.find("bndbox")
+
+            if box is None:
+                raise ValueError("Missing bounding box")
+
+            xmin = float(box.findtext("xmin", "nan"))
+            ymin = float(box.findtext("ymin", "nan"))
+            xmax = float(box.findtext("xmax", "nan"))
+            ymax = float(box.findtext("ymax", "nan"))
+
+            if not all(
+                value == value
+                for value in [xmin, ymin, xmax, ymax]
+            ):
+                raise ValueError("Invalid bounding-box coordinates")
+
+            # Clip boxes to image boundaries.
+            xmin = max(0, min(xmin, width))
+            xmax = max(0, min(xmax, width))
+            ymin = max(0, min(ymin, height))
+            ymax = max(0, min(ymax, height))
+
+            if xmax <= xmin or ymax <= ymin:
+                raise ValueError("Bounding box has no valid area")
+
+            x_center = ((xmin + xmax) / 2) / width
+            y_center = ((ymin + ymax) / 2) / height
+            box_width = (xmax - xmin) / width
+            box_height = (ymax - ymin) / height
+
+            labels.append(
+                f"0 {x_center:.6f} {y_center:.6f} "
+                f"{box_width:.6f} {box_height:.6f}"
+            )
+
+        return labels
+
+    except (ET.ParseError, OSError, ValueError) as exc:
+        print(f"Invalid annotation {xml_path.name}: {exc}")
+        return None
+
+
+# --------------------------------------------------
+# DATASET PREPARATION
+# --------------------------------------------------
+
+def main():
+    if not SOURCE_DIR.is_dir():
+        raise FileNotFoundError(
+            f"Dataset folder not found: {SOURCE_DIR}\n"
+            "Update SOURCE_DIR with the correct path."
+        )
+
+    images = sorted(
+        path
+        for path in SOURCE_DIR.iterdir()
+        if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+    )
+
+    if not images:
+        raise RuntimeError(
+            f"No supported images found in {SOURCE_DIR}"
+        )
+
+    valid_samples = []
+    invalid_samples = []
+
+    print(f"Images discovered: {len(images)}")
+
+    for image_path in images:
+        xml_path = image_path.with_suffix(".xml")
+
+        if not xml_path.is_file():
+            invalid_samples.append(
+                (image_path.name, "Missing XML annotation")
+            )
+            continue
+
+        labels = parse_annotation(xml_path, image_path)
+
+        if labels is None:
+            invalid_samples.append(
+                (image_path.name, "Invalid XML or bounding box")
+            )
+            continue
+
+        valid_samples.append((image_path, labels))
+
+    if len(valid_samples) < 3:
+        raise RuntimeError(
+            "Fewer than three valid samples were found. "
+            "Check the dataset before creating splits."
+        )
+
+    random.Random(RANDOM_SEED).shuffle(valid_samples)
+
+    total = len(valid_samples)
+
+    train_end = int(total * TRAIN_RATIO)
+    val_end = train_end + int(total * VAL_RATIO)
+
+    splits = {
+        "train": valid_samples[:train_end],
+        "val": valid_samples[train_end:val_end],
+        "test": valid_samples[val_end:],
+    }
+
+    # Create output directories.
+    for split in splits:
+        (OUTPUT_DIR / "images" / split).mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        (OUTPUT_DIR / "labels" / split).mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+    for split, samples in splits.items():
+        for image_path, labels in samples:
+            destination_image = (
+                OUTPUT_DIR / "images" / split / image_path.name
+            )
+
+            destination_label = (
+                OUTPUT_DIR / "labels" / split /
+                f"{image_path.stem}.txt"
+            )
+
+            shutil.copy2(image_path, destination_image)
+
+            destination_label.write_text(
+                "\n".join(labels) + ("\n" if labels else ""),
+                encoding="utf-8",
+            )
+
+    # Write YOLO dataset configuration.
+    yaml_path = OUTPUT_DIR / "data.yaml"
+
+    yaml_path.write_text(
+        "path: " + OUTPUT_DIR.resolve().as_posix() + "\n"
+        "train: images/train\n"
+        "val: images/val\n"
+        "test: images/test\n\n"
+        "names:\n"
+        "  0: pothole\n",
+        encoding="utf-8",
+    )
+
+    print("\nDATASET PREPARATION COMPLETE")
+    print("-" * 35)
+
+    for split, samples in splits.items():
+        print(f"{split}: {len(samples)} images")
+
+    print(f"Valid images: {len(valid_samples)}")
+    print(f"Invalid samples: {len(invalid_samples)}")
+    print(f"YOLO configuration: {yaml_path}")
+
+    if invalid_samples:
+        print("\nFirst invalid samples:")
+        for filename, reason in invalid_samples[:10]:
+            print(f"- {filename}: {reason}")
+
+
+if __name__ == "__main__":
+    main()
