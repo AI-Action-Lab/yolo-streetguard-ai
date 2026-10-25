@@ -219,5 +219,27 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Ignore the original pothole dataset
-data/raw/
+# Ignore the original pothole dataset while keeping documentation
+data/raw/*
+!data/raw/README.md
+
+# Ignore the generated processed dataset
+data/processed/potholes/
+
+# Ignore trained model weights
+models/pothole/best.pt
+
+# Ignore generated detection images while keeping documentation
+outputs/detections/*
+!outputs/detections/README.md
+
+# Ignore local Python environments
+.venv/
+venv/
+ENV/
+
+# Ignore local environment variables
+.env
+.env.*
+!.env.example
+
