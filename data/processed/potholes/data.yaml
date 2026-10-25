@@ -1,0 +1,6 @@
+path: D:/github patelharshil2288/yolo-streetguard-ai/data/processed/potholes
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: pothole
