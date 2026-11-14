@@ -1,4 +1,6 @@
 from pathlib import Path
+
+from PIL import Image, UnidentifiedImageError
 from ultralytics import YOLO
 
 
@@ -22,6 +24,26 @@ def detect_potholes(image_path: str) -> None:
         raise FileNotFoundError(
             f"Image not found: {image_path}"
         )
+
+    # Validate supported image formats
+    supported_formats = {
+        ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"
+    }
+
+    if image_path.suffix.lower() not in supported_formats:
+        raise ValueError(
+            f"Unsupported image format: {image_path.suffix}. "
+            f"Supported formats: {', '.join(sorted(supported_formats))}"
+        )
+    
+    # Validate that the image can be opened
+    try:
+        with Image.open(image_path) as image:
+            image.verify()
+    except (UnidentifiedImageError, OSError) as error:
+        raise ValueError(
+            f"The input file is not a valid or readable image: {image_path}"
+        ) from error
 
     # Validate trained model
     if not MODEL_PATH.is_file():
