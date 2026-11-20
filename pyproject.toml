@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yolo-streetguard-ai"
+version = "0.1.0"
+description = "AI-assisted pothole detection and India-first road reporting platform."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "alembic>=1.14,<2",
+  "boto3>=1.36,<2",
+  "celery[redis]>=5.5,<6",
+  "fastapi>=0.115,<1",
+  "geoalchemy2>=0.15,<1",
+  "httpx>=0.28,<1",
+  "pillow>=11,<14",
+  "psycopg[binary]>=3.2,<4",
+  "pycountry>=24,<25",
+  "pydantic-settings>=2.7,<3",
+  "pyjwt[crypto]>=2.10,<3",
+  "sqlalchemy[asyncio]>=2.0,<3",
+  "structlog>=24,<26",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.25,<1",
+  "pytest-cov>=6,<7",
+  "ruff>=0.9,<1",
+  "types-boto3[s3]>=1.36,<2",
+]
+model = [
+  "pyyaml>=6,<7",
+  "ultralytics==8.4.189",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["streetguard*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"migrations/**/*.py" = ["E501"]
+"src/streetguard/api/analytics.py" = ["B008"]
+"src/streetguard/api/administration.py" = ["B008"]
+"src/streetguard/api/communications.py" = ["B008"]
+"src/streetguard/api/detections.py" = ["B008"]
+"src/streetguard/api/geography.py" = ["B008"]
+"src/streetguard/api/map.py" = ["B008"]
+"src/streetguard/api/locations.py" = ["B008"]
+"src/streetguard/api/reports.py" = ["B008"]
+"src/streetguard/security/oidc.py" = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["streetguard"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["geoalchemy2.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["ultralytics.*", "celery.*"]
+ignore_missing_imports = true

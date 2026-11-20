@@ -1,0 +1,2 @@
+# Deprecated compatibility file; use requirements.txt or requirements-dev.txt.
+-r requirements-dev.txt

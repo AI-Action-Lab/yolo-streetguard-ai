@@ -1,0 +1,177 @@
+name: streetguard
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  migrate:
+    image: streetguard-api:production
+    build:
+      context: .
+      target: runtime
+    env_file:
+      - .env.production
+    environment:
+      APP_ENV: production
+    secrets:
+      - database_url
+    command: ["alembic", "upgrade", "head"]
+    logging: *default-logging
+    restart: "no"
+
+  api:
+    image: streetguard-api:production
+    build:
+      context: .
+      target: runtime
+    env_file:
+      - .env.production
+    environment:
+      APP_ENV: production
+    secrets:
+      - database_url
+      - redis_url
+      - storage_access_key
+      - storage_secret_key
+      - google_maps_api_key
+      - smtp_password
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+
+  worker:
+    image: streetguard-inference:production
+    build:
+      context: .
+      target: inference
+    env_file:
+      - .env.production
+    environment:
+      APP_ENV: production
+      MODEL_PATH: /models/pothole/best.pt
+      MODEL_CHECKSUM: ${MODEL_CHECKSUM:?Set MODEL_CHECKSUM to the model SHA-256}
+    secrets:
+      - database_url
+      - redis_url
+      - storage_access_key
+      - storage_secret_key
+      - google_maps_api_key
+      - smtp_password
+    volumes:
+      - type: bind
+        source: ${MODEL_ARTIFACT_PATH:?Set MODEL_ARTIFACT_PATH to a verified model file}
+        target: /models/pothole/best.pt
+        read_only: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command:
+      [
+        "celery",
+        "-A",
+        "streetguard.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=detection",
+        "--concurrency=1",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "celery -A streetguard.celery_app:celery_app inspect ping --timeout=5 | python -c \"import sys; sys.exit(0 if 'pong' in sys.stdin.read() else 1)\"",
+        ]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging: *default-logging
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 60s
+
+  frontend:
+    image: streetguard-frontend:production
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?Set the public HTTPS API base URL}
+        NEXT_PUBLIC_MAP_STYLE_URL: ${NEXT_PUBLIC_MAP_STYLE_URL:-https://tiles.openfreemap.org/styles/liberty}
+        NEXT_PUBLIC_MAP_SATELLITE_STYLE_URL: ${NEXT_PUBLIC_MAP_SATELLITE_STYLE_URL:-}
+        NEXT_PUBLIC_MAP_TERRAIN_STYLE_URL: ${NEXT_PUBLIC_MAP_TERRAIN_STYLE_URL:-}
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then((r) => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+    restart: unless-stopped
+    init: true
+
+  proxy:
+    image: caddy:2-alpine
+    env_file:
+      - .env.production
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    logging: *default-logging
+    restart: unless-stopped
+
+secrets:
+  database_url:
+    file: ${SECRETS_DIR:?Set SECRETS_DIR}/database_url
+  redis_url:
+    file: ${SECRETS_DIR:?Set SECRETS_DIR}/redis_url
+  storage_access_key:
+    file: ${SECRETS_DIR:?Set SECRETS_DIR}/storage_access_key
+  storage_secret_key:
+    file: ${SECRETS_DIR:?Set SECRETS_DIR}/storage_secret_key
+  google_maps_api_key:
+    file: ${SECRETS_DIR:?Set SECRETS_DIR}/google_maps_api_key
+  smtp_password:
+    file: ${SECRETS_DIR:?Set SECRETS_DIR}/smtp_password
+
+volumes:
+  caddy_data:
+  caddy_config:
